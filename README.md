@@ -27,7 +27,7 @@ A modern, fast, and beautiful Point of Sale (POS) system built with Flutter. Des
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/sutsengdu/project-pos.git
+   git clone https://github.com/sutsengdu/project-pos-android-PoPOS.git
    ```
 
 2. Install dependencies:
