@@ -7,6 +7,8 @@ import '../providers/category_provider.dart';
 import '../models/product.dart';
 import '../models/category.dart';
 import 'category_screen.dart';
+import 'main_screen.dart';
+import '../providers/staff_provider.dart';
 
 class ProductScreen extends StatefulWidget {
   const ProductScreen({super.key});
@@ -25,6 +27,8 @@ class _ProductScreenState extends State<ProductScreen> {
     final settingsProvider = Provider.of<SettingsProvider>(context);
     final categoryProvider = Provider.of<CategoryProvider>(context);
     final productProvider = Provider.of<ProductProvider>(context);
+    final staffProvider = Provider.of<StaffProvider>(context);
+    final canManage = !settingsProvider.settings.isProUnlocked || staffProvider.hasPermission('manage_inventory');
 
     final filteredProducts = productProvider.products.where((p) {
       final matchesSearch = p.name.toLowerCase().contains(_searchQuery.toLowerCase()) || 
@@ -112,13 +116,13 @@ class _ProductScreenState extends State<ProductScreen> {
                     itemCount: filteredProducts.length,
                     itemBuilder: (context, index) {
                       final product = filteredProducts[index];
-                      return _buildProductCard(context, product, settingsProvider);
+                      return _buildProductCard(context, product, settingsProvider, canManage);
                     },
                   ),
           ),
         ],
       ),
-      floatingActionButton: Container(
+      floatingActionButton: canManage ? Container(
         height: 64,
         width: 64,
         decoration: BoxDecoration(
@@ -140,11 +144,11 @@ class _ProductScreenState extends State<ProductScreen> {
           elevation: 0,
           child: const Icon(Icons.add, color: Colors.white, size: 30),
         ),
-      ),
+      ) : null,
     );
   }
 
-  Widget _buildProductCard(BuildContext context, Product product, SettingsProvider settingsProvider) {
+  Widget _buildProductCard(BuildContext context, Product product, SettingsProvider settingsProvider, bool canManage) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -171,10 +175,10 @@ class _ProductScreenState extends State<ProductScreen> {
         ),
         title: Text(product.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
         subtitle: Text(
-          '${product.price} KS • ${settingsProvider.l10n('stock')}: ${product.stock}',
+          '${product.price} ${settingsProvider.settings.currencySymbol} • ${settingsProvider.l10n('stock')}: ${product.stock}',
           style: TextStyle(color: isDark ? Colors.white54 : Colors.grey[600]),
         ),
-        trailing: PopupMenuButton<String>(
+        trailing: canManage ? PopupMenuButton<String>(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           onSelected: (v) {
             if (v == 'edit') _showProductDialog(context, product: product);
@@ -184,7 +188,7 @@ class _ProductScreenState extends State<ProductScreen> {
             PopupMenuItem(value: 'edit', child: Row(children: [const Icon(Icons.edit_outlined, size: 20), const SizedBox(width: 8), Text(settingsProvider.l10n('edit'))])),
             PopupMenuItem(value: 'delete', child: Row(children: [const Icon(Icons.delete_outline, color: Colors.red, size: 20), const SizedBox(width: 8), Text(settingsProvider.l10n('delete'), style: const TextStyle(color: Colors.red))])),
           ],
-        ),
+        ) : null,
       ),
     );
   }
@@ -241,7 +245,7 @@ class _ProductDialogState extends State<ProductDialog> {
     super.initState();
     _nameController = TextEditingController(text: widget.product?.name ?? '');
     _priceController = TextEditingController(text: widget.product?.price.toString() ?? '');
-    _costPriceController = TextEditingController(text: widget.product?.costPrice.toString() ?? '');
+    _costPriceController = TextEditingController(text: widget.product?.cost.toString() ?? '');
     _stockController = TextEditingController(text: widget.product?.stock.toString() ?? '');
     _barcodeController = TextEditingController(text: widget.product?.barcode ?? '');
     _thresholdController = TextEditingController(text: widget.product?.lowStockThreshold.toString() ?? '5');
@@ -282,7 +286,7 @@ class _ProductDialogState extends State<ProductDialog> {
                 Expanded(
                   child: TextFormField(
                     controller: _priceController,
-                    decoration: InputDecoration(labelText: '${settingsProvider.l10n('price')} (KS)', prefixIcon: const Icon(Icons.payments_outlined)),
+                    decoration: InputDecoration(labelText: '${settingsProvider.l10n('price')} (${settingsProvider.settings.currencySymbol})', prefixIcon: const Icon(Icons.payments_outlined)),
                     keyboardType: TextInputType.number,
                     validator: (v) => v!.isEmpty ? settingsProvider.languageCode == 'my' ? 'ဖြည့်သွင်းရန်လိုအပ်သည်' : 'Required' : null,
                   ),
@@ -301,7 +305,7 @@ class _ProductDialogState extends State<ProductDialog> {
             const SizedBox(height: 16),
             TextFormField(
               controller: _costPriceController,
-              decoration: InputDecoration(labelText: '${settingsProvider.l10n('cost_price')} (KS)', prefixIcon: const Icon(Icons.account_balance_wallet_outlined)),
+              decoration: InputDecoration(labelText: '${settingsProvider.l10n('cost_price')} (${settingsProvider.settings.currencySymbol})', prefixIcon: const Icon(Icons.account_balance_wallet_outlined)),
               keyboardType: TextInputType.number,
               validator: (v) => v!.isEmpty ? settingsProvider.languageCode == 'my' ? 'ဖြည့်သွင်းရန်လိုအပ်သည်' : 'Required' : null,
             ),
@@ -364,21 +368,38 @@ class _ProductDialogState extends State<ProductDialog> {
 
   void _save() {
     if (_formKey.currentState!.validate()) {
+      final name = _nameController.text.trim();
+      final provider = Provider.of<ProductProvider>(context, listen: false);
+      final isDuplicate = provider.products.any((p) => 
+        p.name.toLowerCase() == name.toLowerCase() && p.id != widget.product?.id
+      );
+
+      if (isDuplicate) {
+        final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(settingsProvider.languageCode == 'my' ? 'ဤကုန်ပစ္စည်းအမည်ရှိပြီးသားဖြစ်သည်' : 'Product name already exists!'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
       final product = Product(
         id: widget.product?.id,
-        name: _nameController.text,
+        name: name,
         categoryId: _selectedCategoryId!,
         price: double.parse(_priceController.text),
-        costPrice: double.parse(_costPriceController.text),
+        cost: double.parse(_costPriceController.text),
         stock: int.parse(_stockController.text),
         barcode: _barcodeController.text,
         lowStockThreshold: int.parse(_thresholdController.text),
       );
 
       if (widget.product == null) {
-        Provider.of<ProductProvider>(context, listen: false).addProduct(product);
+        provider.addProduct(product);
       } else {
-        Provider.of<ProductProvider>(context, listen: false).updateProduct(product);
+        provider.updateProduct(product);
       }
       Navigator.pop(context);
     }
@@ -393,13 +414,23 @@ class BarcodeScannerScreen extends StatefulWidget {
 }
 
 class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
+  final MobileScannerController _controller = MobileScannerController();
   bool _isPopped = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Scan Barcode')),
+      appBar: AppBar(
+        title: const Text('Scan Barcode'),
+      ),
       body: MobileScanner(
+        controller: _controller,
         onDetect: (capture) {
           if (_isPopped) return;
           final List<Barcode> barcodes = capture.barcodes;

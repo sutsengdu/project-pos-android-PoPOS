@@ -44,10 +44,11 @@ class InvoiceService {
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
-              pw.Center(child: pw.Text(shopName, style: boldStyle)),
-              if (settings.address.isNotEmpty) pw.Center(child: pw.Text(shopAddress, style: style)),
-              if (settings.phone.isNotEmpty) pw.Center(child: pw.Text('Tel: ${settings.phone}', style: style)),
-              pw.SizedBox(height: 10),
+              pw.Center(child: pw.Text(shopName, style: boldStyle, textAlign: pw.TextAlign.center)),
+              if (settings.address.isNotEmpty) pw.Center(child: pw.Text(shopAddress, style: style, textAlign: pw.TextAlign.center)),
+              if (settings.phone.isNotEmpty) pw.Center(child: pw.Text('Tel: ${settings.phone}', style: style, textAlign: pw.TextAlign.center)),
+              if (settings.email.isNotEmpty) pw.Center(child: pw.Text('Email: ${settings.email}', style: style, textAlign: pw.TextAlign.center)),
+              pw.SizedBox(height: 5),
               pw.Divider(),
               pw.Text('Invoice #: ${sale.id}', style: style),
               pw.Text('Date: ${sale.timestamp.toString().substring(0, 16)}', style: style),
@@ -61,34 +62,57 @@ class InvoiceService {
                 data: items.map((item) => [
                   _shapeMyanmar(item['product_name']),
                   item['quantity'].toString(),
-                  '${(item['unit_price'] * item['quantity']).toStringAsFixed(0)}',
+                  '${(item['price'] * item['quantity']).toStringAsFixed(0)}',
                 ]).toList(),
               ),
               pw.Divider(),
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
-                  pw.Text('Total:', style: titleStyle),
-                  pw.Text('${sale.totalAmount.toStringAsFixed(0)} KS', style: titleStyle),
+                  pw.Text('Subtotal:', style: style),
+                  pw.Text('${items.fold(0.0, (sum, item) => sum + (item['price'] * item['quantity'])).toStringAsFixed(0)} ${settings.currencySymbol}', style: style),
+                ],
+              ),
+              if (sale.discountAmount > 0)
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text('Discount ${sale.discountType == 'percentage' ? '(${sale.discountAmount.toStringAsFixed(0)}%)' : ''}:', style: style),
+                    pw.Text('-${(items.fold(0.0, (sum, item) => sum + (item['price'] * item['quantity'])) - (sale.totalAmount / (1 + settings.taxRate / 100))).toStringAsFixed(0)} ${settings.currencySymbol}', style: style),
+                  ],
+                ),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text('Tax (${settings.taxRate.toStringAsFixed(0)}%):', style: style),
+                  pw.Text('${(sale.totalAmount - (sale.totalAmount / (1 + settings.taxRate / 100))).toStringAsFixed(0)} ${settings.currencySymbol}', style: style),
+                ],
+              ),
+              pw.SizedBox(height: 4),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                   pw.Text('Total:', style: titleStyle),
+                   pw.Text('${sale.totalAmount.toStringAsFixed(0)} ${settings.currencySymbol}', style: titleStyle),
                 ],
               ),
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
                   pw.Text('Paid:', style: style),
-                  pw.Text('${sale.amountPaid.toStringAsFixed(0)} KS', style: style),
+                  pw.Text('${sale.amountPaid.toStringAsFixed(0)} ${settings.currencySymbol}', style: style),
                 ],
               ),
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
                   pw.Text('Change:', style: style),
-                  pw.Text('${sale.change.toStringAsFixed(0)} KS', style: style),
+                  pw.Text('${(sale.change < 0 ? 0 : sale.change).toStringAsFixed(0)} ${settings.currencySymbol}', style: style),
                 ],
               ),
               pw.SizedBox(height: 20),
               if (settings.footerMessage.isNotEmpty)
-                pw.Center(child: pw.Text(footerMsg, style: pw.TextStyle(font: robotoFont, fontFallback: fontFallback, fontSize: 10, fontStyle: pw.FontStyle.italic))),
+                pw.Center(child: pw.Text(footerMsg, style: pw.TextStyle(font: robotoFont, fontFallback: fontFallback, fontSize: 10, fontStyle: pw.FontStyle.italic), textAlign: pw.TextAlign.center)),
             ],
           );
         },
@@ -97,9 +121,24 @@ class InvoiceService {
     return pdf;
   }
 
+  static Future<void> printToThermal(Sale sale, List<Map<String, dynamic>> items, ShopSettings settings) async {
+    final pdf = await _buildDocument(sale, items, settings);
+    // Optimized for 58mm (roll57) thermal printers
+    await Printing.layoutPdf(
+      onLayout: (PdfPageFormat format) async => pdf.save(),
+      name: 'receipt_${sale.id}',
+      format: PdfPageFormat.roll57,
+    );
+  }
+
   static Future<void> generateAndShowInvoice(Sale sale, List<Map<String, dynamic>> items, ShopSettings settings) async {
     final pdf = await _buildDocument(sale, items, settings);
-    await Printing.layoutPdf(onLayout: (PdfPageFormat format) async => pdf.save(), name: 'invoice_${sale.id}');
+    // Use roll57 as default for mini thermal printers, but layoutPdf allows system selection
+    await Printing.layoutPdf(
+      onLayout: (PdfPageFormat format) async => pdf.save(), 
+      name: 'invoice_${sale.id}',
+      format: PdfPageFormat.roll57
+    );
   }
 
   static Future<void> shareInvoice(Sale sale, List<Map<String, dynamic>> items, ShopSettings settings) async {

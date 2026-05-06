@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/category_provider.dart';
 import '../providers/settings_provider.dart';
 import '../models/category.dart';
+import '../providers/staff_provider.dart';
 
 class CategoryScreen extends StatelessWidget {
   const CategoryScreen({super.key});
@@ -11,6 +12,9 @@ class CategoryScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final settingsProvider = Provider.of<SettingsProvider>(context);
+    final staffProvider = Provider.of<StaffProvider>(context);
+    final canManage = !settingsProvider.settings.isProUnlocked || staffProvider.hasPermission('manage_inventory');
+
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
@@ -57,7 +61,7 @@ class CategoryScreen extends StatelessWidget {
                     child: const Icon(Icons.folder_open_rounded, color: Color(0xFF0EA5E9), size: 20),
                   ),
                   title: Text(category.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
-                  trailing: PopupMenuButton<String>(
+                  trailing: canManage ? PopupMenuButton<String>(
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                     onSelected: (v) {
                       if (v == 'edit') _showCategoryDialog(context, category: category);
@@ -67,7 +71,7 @@ class CategoryScreen extends StatelessWidget {
                       PopupMenuItem(value: 'edit', child: Row(children: [const Icon(Icons.edit_outlined, size: 20), const SizedBox(width: 8), Text(settingsProvider.l10n('edit'))])),
                       PopupMenuItem(value: 'delete', child: Row(children: [const Icon(Icons.delete_outline, color: Colors.red, size: 20), const SizedBox(width: 8), Text(settingsProvider.l10n('delete'), style: const TextStyle(color: Colors.red))])),
                     ],
-                  ),
+                  ) : null,
                 ),
               );
             },
@@ -88,12 +92,12 @@ class CategoryScreen extends StatelessWidget {
             ),
           ],
         ),
-        child: FloatingActionButton(
+        child: canManage ? FloatingActionButton(
           onPressed: () => _showCategoryDialog(context),
           backgroundColor: Colors.transparent,
           elevation: 0,
           child: const Icon(Icons.add_rounded, color: Colors.white, size: 30),
-        ),
+        ) : null,
       ),
     );
   }
@@ -120,10 +124,25 @@ class CategoryScreen extends StatelessWidget {
             onPressed: () {
               final name = controller.text.trim();
               if (name.isNotEmpty) {
+                final provider = Provider.of<CategoryProvider>(context, listen: false);
+                final isDuplicate = provider.categories.any((c) => 
+                  c.name.toLowerCase() == name.toLowerCase() && c.id != category?.id
+                );
+                
+                if (isDuplicate) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(settingsProvider.languageCode == 'my' ? 'ဤအမျိုးအစားအမည်ရှိပြီးသားဖြစ်သည်' : 'Category name already exists!'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+
                 if (category == null) {
-                  Provider.of<CategoryProvider>(context, listen: false).addCategory(name);
+                  provider.addCategory(name);
                 } else {
-                  Provider.of<CategoryProvider>(context, listen: false).updateCategory(
+                  provider.updateCategory(
                     Category(id: category.id, name: name),
                   );
                 }

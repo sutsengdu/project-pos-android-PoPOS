@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../providers/product_provider.dart';
+import '../providers/settings_provider.dart';
 import '../models/sale.dart';
 import '../models/sale_item.dart';
 import '../models/product.dart';
@@ -14,12 +15,37 @@ class SaleProvider with ChangeNotifier {
   List<Sale> _sales = [];
   List<Sale> get sales => _sales;
 
-  double get totalAmount {
+  double _discountAmount = 0.0;
+  String _discountType = 'fixed'; // 'fixed' or 'percentage'
+  
+  double get discountAmount => _discountAmount;
+  String get discountType => _discountType;
+
+  void setDiscount(double amount, String type) {
+    _discountAmount = amount;
+    _discountType = type;
+    notifyListeners();
+  }
+
+  double get discountValue {
+    if (_discountType == 'percentage') {
+      return subTotal * (_discountAmount / 100);
+    }
+    return _discountAmount;
+  }
+
+  double get subTotal {
     double total = 0.0;
     _cartItems.forEach((key, item) {
-      total += item.unitPrice * item.quantity;
+      total += item.price * item.quantity;
     });
     return total;
+  }
+
+  double getTotalWithTax(double taxRate) {
+    double discountedSubtotal = subTotal - discountValue;
+    if (discountedSubtotal < 0) discountedSubtotal = 0;
+    return discountedSubtotal * (1 + taxRate / 100);
   }
 
   void addToCart(Product product) {
@@ -30,7 +56,8 @@ class SaleProvider with ChangeNotifier {
           saleId: 0,
           productId: existing.productId,
           quantity: existing.quantity + 1,
-          unitPrice: existing.unitPrice,
+          price: existing.price,
+          cost: existing.cost,
         ),
       );
     } else {
@@ -40,7 +67,8 @@ class SaleProvider with ChangeNotifier {
           saleId: 0,
           productId: product.id!,
           quantity: 1,
-          unitPrice: product.price,
+          price: product.price,
+          cost: product.cost,
         ),
       );
     }
@@ -52,24 +80,59 @@ class SaleProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  void updateQuantity(int productId, int delta) {
+    if (_cartItems.containsKey(productId)) {
+      final existing = _cartItems[productId]!;
+      final newQty = existing.quantity + delta;
+      
+      if (newQty <= 0) {
+        _cartItems.remove(productId);
+      } else {
+        _cartItems.update(
+          productId,
+          (existing) => SaleItem(
+            saleId: existing.saleId,
+            productId: existing.productId,
+            quantity: newQty,
+            price: existing.price,
+            cost: existing.cost,
+          ),
+        );
+      }
+      notifyListeners();
+    }
+  }
+
   void clearCart() {
     _cartItems = {};
+    _discountAmount = 0.0;
+    _discountType = 'fixed';
     notifyListeners();
   }
 
   Future<Sale?> completeSale(BuildContext context, {
+    required double totalAmount,
+    double discountAmount = 0.0,
+    String discountType = 'fixed',
     String paymentMethod = 'Cash',
     double amountPaid = 0.0,
     double change = 0.0,
+    String? customerName,
+    String? cashierName,
   }) async {
     if (_cartItems.isEmpty) return null;
 
     final sale = Sale(
       totalAmount: totalAmount,
+      discountAmount: discountAmount,
+      discountType: discountType,
+      taxRate: Provider.of<SettingsProvider>(context, listen: false).settings.taxRate,
       timestamp: DateTime.now(),
       paymentMethod: paymentMethod,
       amountPaid: amountPaid,
       change: change,
+      customerName: customerName,
+      cashierName: cashierName,
     );
 
     final itemsList = _cartItems.values.toList();
@@ -77,6 +140,8 @@ class SaleProvider with ChangeNotifier {
     
     // Clear cart
     _cartItems = {};
+    _discountAmount = 0.0;
+    _discountType = 'fixed';
     notifyListeners();
 
     // Refresh data

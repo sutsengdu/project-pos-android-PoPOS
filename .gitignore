@@ -59,3 +59,9 @@ app.*.map.json
 # macOS builds
 /macos/Flutter/ephemeral/
 /macos/Flutter/generated_config/
+
+# Laravel
+/backend
+
+# React
+/frontend

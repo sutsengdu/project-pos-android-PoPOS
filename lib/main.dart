@@ -4,11 +4,16 @@ import 'providers/product_provider.dart';
 import 'providers/category_provider.dart';
 import 'providers/sale_provider.dart';
 import 'providers/settings_provider.dart';
+import 'providers/expense_provider.dart';
+import 'providers/staff_provider.dart';
 import 'services/notification_service.dart';
 import 'screens/main_screen.dart';
 
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await dotenv.load(fileName: ".env");
   await NotificationService().init();
   
   runApp(const MyApp());
@@ -25,6 +30,8 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => ProductProvider()..fetchProducts()),
         ChangeNotifierProvider(create: (_) => SaleProvider()..fetchSales()),
         ChangeNotifierProvider(create: (_) => SettingsProvider()..fetchSettings()),
+        ChangeNotifierProvider(create: (_) => ExpenseProvider()..fetchExpenses()),
+        ChangeNotifierProvider(create: (_) => StaffProvider()..loadStaff()),
       ],
       child: Consumer<SettingsProvider>(
         builder: (context, settings, _) {

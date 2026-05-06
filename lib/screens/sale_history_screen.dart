@@ -3,8 +3,10 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../providers/sale_provider.dart';
 import '../providers/settings_provider.dart';
+import '../providers/staff_provider.dart';
 import '../models/sale.dart';
 import '../services/invoice_service.dart';
+import 'main_screen.dart';
 
 class SaleHistoryScreen extends StatefulWidget {
   const SaleHistoryScreen({super.key});
@@ -30,7 +32,9 @@ class _SaleHistoryScreenState extends State<SaleHistoryScreen> {
 
     final filteredSales = saleProvider.sales.where((sale) {
       final matchesQuery = sale.id.toString().contains(_searchQuery) ||
-          sale.paymentMethod.toLowerCase().contains(_searchQuery.toLowerCase());
+          sale.paymentMethod.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+          (sale.customerName?.toLowerCase().contains(_searchQuery.toLowerCase()) ?? false) ||
+          (sale.cashierName?.toLowerCase().contains(_searchQuery.toLowerCase()) ?? false);
       
       bool matchesDate = true;
       if (_selectedDateRange != null) {
@@ -140,7 +144,7 @@ class _SaleHistoryScreenState extends State<SaleHistoryScreen> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  '${sale.totalAmount.toStringAsFixed(0)} KS',
+                  '${sale.totalAmount.toStringAsFixed(0)} ${settings.settings.currencySymbol}',
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: isDark ? Colors.white : const Color(0xFF1E293B)),
                 ),
                 Text(
@@ -150,10 +154,11 @@ class _SaleHistoryScreenState extends State<SaleHistoryScreen> {
               ],
             ),
             const SizedBox(width: 8),
-            IconButton(
-              icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
-              onPressed: () => _confirmDelete(context, sale.id!, provider, settings),
-            ),
+            if (!settings.settings.isProUnlocked || Provider.of<StaffProvider>(context, listen: false).hasPermission('delete_sale'))
+              IconButton(
+                icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+                onPressed: () => _confirmDelete(context, sale.id!, provider, settings),
+              ),
           ],
         ),
         onTap: () => _showSaleDetails(context, sale, provider, settings),
@@ -208,6 +213,11 @@ class _SaleHistoryScreenState extends State<SaleHistoryScreen> {
               ),
               const SizedBox(height: 16),
               Text(settings.l10n('sale_details'), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              if (sale.customerName != null) 
+                Text('${settings.l10n('customer_name')}: ${sale.customerName}', style: const TextStyle(fontWeight: FontWeight.w500)),
+              if (sale.cashierName != null) 
+                Text('${settings.languageCode == 'my' ? 'ငွေကိုင်' : 'Cashier'}: ${sale.cashierName}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
               const SizedBox(height: 16),
               Expanded(
                 child: ListView.separated(
@@ -225,13 +235,13 @@ class _SaleHistoryScreenState extends State<SaleHistoryScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(item['product_name'], style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
-                                Text('${item['unit_price']} KS x ${item['quantity']}', style: TextStyle(color: isDark ? Colors.white54 : Colors.grey[600])),
+                                Text(item['product_name'] ?? 'Unknown Product', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+                                Text('${item['price'] ?? 0} ${settings.settings.currencySymbol} x ${item['quantity'] ?? 0}', style: TextStyle(color: isDark ? Colors.white54 : Colors.grey[600])),
                               ],
                             ),
                           ),
                           Text(
-                            '${(item['unit_price'] * item['quantity']).toStringAsFixed(0)} KS',
+                            '${((item['price'] ?? 0) * (item['quantity'] ?? 0)).toStringAsFixed(0)} ${settings.settings.currencySymbol}',
                             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                           ),
                         ],

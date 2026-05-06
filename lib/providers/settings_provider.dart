@@ -1,13 +1,23 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../models/shop_settings.dart';
 import '../services/database_helper.dart';
+import '../services/sync_service.dart';
+import '../services/api_service.dart';
 import '../services/backup_service.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:device_info_plus/device_info_plus.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class SettingsProvider with ChangeNotifier {
   ShopSettings _settings = ShopSettings();
   final DatabaseHelper _dbHelper = DatabaseHelper();
+  bool _isSyncing = false;
+  DateTime? _lastSyncTime;
 
   ShopSettings get settings => _settings;
+  bool get isSyncing => _isSyncing;
+  DateTime? get lastSyncTime => _lastSyncTime;
 
   bool get isDarkMode => _settings.isDarkMode;
   String get languageCode => _settings.languageCode;
@@ -18,8 +28,26 @@ class SettingsProvider with ChangeNotifier {
   Future<void> fetchSettings() async {
     final Map<String, dynamic> map = await _dbHelper.getShopSettings();
     _settings = ShopSettings.fromMap(map);
+
+    // Sync with .env if different (allows user to change IP in .env easily)
+    final envUrl = dotenv.get('API_URL', fallback: '');
+    if (envUrl.isNotEmpty && _settings.apiBaseUrl != envUrl) {
+      _settings = _settings.copyWith(apiBaseUrl: envUrl);
+      await updateSettings(_settings);
+      debugPrint('Auto-updated apiBaseUrl from .env: $envUrl');
+    }
+
     _isLoaded = true;
     notifyListeners();
+
+    // Initialize Auto-Sync
+    if (_settings.isLoggedIn && _settings.cloudToken != null) {
+      SyncService(baseUrl: _settings.apiBaseUrl, authToken: _settings.cloudToken)
+          .initializeAutoSync(_settings);
+      
+      // Auto-refresh PRO status in background on startup
+      refreshProStatus();
+    }
   }
 
   Future<void> updateSettings(ShopSettings newSettings) async {
@@ -29,85 +57,188 @@ class SettingsProvider with ChangeNotifier {
   }
 
   Future<void> toggleTheme() async {
-    final newSettings = ShopSettings(
-      name: _settings.name,
-      address: _settings.address,
-      phone: _settings.phone,
-      email: _settings.email,
-      footerMessage: _settings.footerMessage,
-      isDarkMode: !_settings.isDarkMode,
-      languageCode: _settings.languageCode,
-      autoBackupInterval: _settings.autoBackupInterval,
-      lastBackupDate: _settings.lastBackupDate,
-      mmqrImagePath: _settings.mmqrImagePath,
-    );
+    final newSettings = _settings.copyWith(isDarkMode: !_settings.isDarkMode);
     await updateSettings(newSettings);
   }
 
   Future<void> setLanguage(String code) async {
-    final newSettings = ShopSettings(
-      name: _settings.name,
-      address: _settings.address,
-      phone: _settings.phone,
-      email: _settings.email,
-      footerMessage: _settings.footerMessage,
-      isDarkMode: _settings.isDarkMode,
-      languageCode: code,
-      autoBackupInterval: _settings.autoBackupInterval,
-      lastBackupDate: _settings.lastBackupDate,
-      mmqrImagePath: _settings.mmqrImagePath,
-    );
+    final newSettings = _settings.copyWith(languageCode: code);
     await updateSettings(newSettings);
   }
 
+  Future<int> getUnsyncedSalesCount() async {
+    return await _dbHelper.getUnsyncedCount('sales');
+  }
+
   Future<void> updateBackupInterval(String interval) async {
-    final newSettings = ShopSettings(
-      name: _settings.name,
-      address: _settings.address,
-      phone: _settings.phone,
-      email: _settings.email,
-      footerMessage: _settings.footerMessage,
-      isDarkMode: _settings.isDarkMode,
-      languageCode: _settings.languageCode,
-      autoBackupInterval: interval,
-      lastBackupDate: _settings.lastBackupDate,
-      mmqrImagePath: _settings.mmqrImagePath,
-    );
+    final newSettings = _settings.copyWith(autoBackupInterval: interval);
     await updateSettings(newSettings);
   }
+
 
   Future<void> triggerBackup() async {
     await BackupService.exportBackup();
     final now = DateTime.now().toIso8601String();
-    final newSettings = ShopSettings(
-      name: _settings.name,
-      address: _settings.address,
-      phone: _settings.phone,
-      email: _settings.email,
-      footerMessage: _settings.footerMessage,
-      isDarkMode: _settings.isDarkMode,
-      languageCode: _settings.languageCode,
-      autoBackupInterval: _settings.autoBackupInterval,
-      lastBackupDate: now,
-      mmqrImagePath: _settings.mmqrImagePath,
-    );
+    final newSettings = _settings.copyWith(lastBackupDate: now);
     await updateSettings(newSettings);
   }
 
   Future<void> updateMMQRImagePath(String path) async {
-    final newSettings = ShopSettings(
-      name: _settings.name,
-      address: _settings.address,
-      phone: _settings.phone,
-      email: _settings.email,
-      footerMessage: _settings.footerMessage,
-      isDarkMode: _settings.isDarkMode,
-      languageCode: _settings.languageCode,
-      autoBackupInterval: _settings.autoBackupInterval,
-      lastBackupDate: _settings.lastBackupDate,
-      mmqrImagePath: path,
+    final newSettings = _settings.copyWith(mmqrImagePath: path);
+    await updateSettings(newSettings);
+  }
+
+  Future<void> refreshProStatus() async {
+    if (!_settings.isLoggedIn || _settings.cloudToken == null) return;
+    
+    try {
+      final api = ApiService(baseUrl: _settings.apiBaseUrl);
+      final response = await api.get('/user', headers: {
+        'Authorization': 'Bearer ${_settings.cloudToken}',
+      });
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final isPro = data['is_pro'] == 1 || data['is_pro'] == true;
+        final proExpiresAt = data['pro_expires_at'];
+        
+        final newSettings = _settings.copyWith(
+          isProUnlocked: isPro,
+          proExpiresAt: proExpiresAt,
+        );
+        await updateSettings(newSettings);
+      }
+    } catch (e) {
+      debugPrint('Failed to refresh PRO status: $e');
+    }
+  }
+
+  Future<String?> syncNow() async {
+    if (!_settings.isLoggedIn || _settings.cloudToken == null) return "Not logged in";
+    
+    _isSyncing = true;
+    notifyListeners();
+
+    try {
+      final error = await SyncService(
+        baseUrl: _settings.apiBaseUrl, 
+        authToken: _settings.cloudToken
+      ).syncAll(_settings);
+      
+      if (error == null) {
+        _lastSyncTime = DateTime.now();
+        await fetchSettings();
+      }
+      
+      _isSyncing = false;
+      notifyListeners();
+      return error;
+    } catch (e) {
+      debugPrint('Sync failed: $e');
+      _isSyncing = false;
+      notifyListeners();
+      return e.toString();
+    }
+  }
+
+  Future<String?> resetSyncAndSyncNow() async {
+    await _dbHelper.resetSyncStatuses();
+    return await syncNow();
+  }
+
+  static const String _googleWebClientId = '135543725732-2mjnhgr45bc8ofih583c1a8slp90uhsj.apps.googleusercontent.com';
+  
+  final GoogleSignIn _googleSignIn = GoogleSignIn(
+    serverClientId: _googleWebClientId,
+    scopes: ['email', 'profile'],
+  );
+
+  Future<String?> loginWithGoogle(String baseUrl) async {
+    try {
+      // Force account selection by signing out from any previous session first
+      try {
+        await _googleSignIn.signOut();
+      } catch (_) {}
+      
+      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+      if (googleUser == null) return 'Google sign-in canceled';
+
+      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+      final String? idToken = googleAuth.idToken;
+
+      if (idToken == null) return 'Failed to get ID token from Google';
+
+      final deviceInfo = DeviceInfoPlugin();
+      String deviceName = "Android Device";
+      try {
+        final androidInfo = await deviceInfo.androidInfo;
+        deviceName = "${androidInfo.brand} ${androidInfo.model}";
+      } catch (_) {}
+
+      final api = ApiService(baseUrl: baseUrl);
+      final response = await api.post('/auth/google', {
+        'idToken': idToken,
+        'device_name': deviceName,
+      });
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final token = data['token'];
+        final email = data['user']['email'];
+        final isPro = data['user']['is_pro'] == 1 || data['user']['is_pro'] == true;
+        final proExpiresAt = data['user']['pro_expires_at'];
+        
+        await login(email, token, baseUrl, isPro, proExpiresAt);
+        
+        // Initial Pull from Cloud (PRO only)
+        if (isPro) {
+          await SyncService(baseUrl: baseUrl, authToken: token).pullAll();
+        }
+        
+        return null; // Success
+      } else {
+        try {
+          final data = jsonDecode(response.body);
+          return data['message'] ?? 'Google backend verification failed (${response.statusCode})';
+        } catch (_) {
+          return 'Server error (${response.statusCode}): ${response.body}';
+        }
+      }
+    } catch (e) {
+      return 'Google login error: $e';
+    }
+  }
+
+  Future<void> login(String email, String token, String baseUrl, bool isPro, [String? proExpiresAt]) async {
+    // CRITICAL: Clear any existing local data from a previous user before logging in
+    await _dbHelper.clearAllData();
+
+    final newSettings = _settings.copyWith(
+      cloudToken: token,
+      cloudUserEmail: email,
+      isLoggedIn: true,
+      apiBaseUrl: baseUrl,
+      isProUnlocked: isPro,
+      proExpiresAt: proExpiresAt,
     );
     await updateSettings(newSettings);
+  }
+
+  Future<void> logout() async {
+    // CRITICAL: Clear all personal/shop data to ensure privacy between different accounts
+    await _dbHelper.clearAllData();
+    
+    // Reset settings to default
+    final defaultSettings = ShopSettings();
+    _settings = defaultSettings;
+    await _dbHelper.updateShopSettings(defaultSettings.toMap());
+
+    // Also sign out from Google
+    try {
+      await _googleSignIn.signOut();
+    } catch (_) {}
+    
+    notifyListeners();
   }
 
   Future<void> resetApp() async {
@@ -124,6 +255,20 @@ class SettingsProvider with ChangeNotifier {
     
     // Simple logic: check if we should backup based on interval
     await BackupService.checkAndRunAutoBackup(_settings.autoBackupInterval, _settings.lastBackupDate);
+  }
+
+  Future<void> exportOfflineBackup() async {
+    await BackupService.exportBackup();
+  }
+
+  Future<bool> importOfflineBackup() async {
+    final success = await BackupService.restoreBackup();
+    if (success) {
+      _isLoaded = false;
+      await fetchSettings();
+      notifyListeners();
+    }
+    return success;
   }
 
   String l10n(String key) {
@@ -206,10 +351,13 @@ class SettingsProvider with ChangeNotifier {
     'no_sale_found': 'No sales record found',
     'refresh_data': 'Refresh Data',
     'premium_edition': 'Premium Edition',
-    'backup_restore': 'Backup & Restore',
-    'manual_backup': 'Manual Backup (Export)',
-    'manual_restore': 'Manual Restore (Import)',
-    'auto_backup': 'Automatic Backup',
+    'backup_restore': 'Cloud Sync & Backup',
+    'cloud_backup': 'Back up to Cloud',
+    'cloud_restore': 'Restore from Cloud',
+    'offline_backup': 'Offline Local Backup',
+    'export_db': 'Export Database (.db)',
+    'import_db': 'Import Database (.db)',
+    'auto_backup': 'Auto Cloud Backup',
     'none': 'None',
     'backup_success': 'Backup successful!',
     'restore_success': 'Restore successful! Please restart the app to apply changes.',
@@ -224,6 +372,16 @@ class SettingsProvider with ChangeNotifier {
     'category_management': 'Category Management',
     'manage_categories': 'Manage Categories',
     'mmqr_pay': 'MMQR Pay',
+    'expenses': 'Expenses',
+    'add_expense': 'Add Expense',
+    'expense_title': 'Expense Title',
+    'no_expenses_found': 'No expenses found',
+    'confirm_delete': 'Are you sure you want to delete this?',
+    'customer_name': 'Customer Name',
+    'optional': 'optional',
+    'low_stock_alerts': 'Low Stock Alerts',
+    'items_low_stock': 'items are low in stock',
+    'view_all': 'View All',
   };
 
   static const Map<String, String> _mmTranslations = {
@@ -298,10 +456,13 @@ class SettingsProvider with ChangeNotifier {
     'no_sale_found': 'ရောင်းချမှုမှတ်တမ်းမရှိပါ',
     'refresh_data': 'ဒေတာအသစ်ပြန်ယူရန်',
     'premium_edition': 'ပရီမီယံဗားရှင်း',
-    'backup_restore': 'ဒေတာသိမ်းဆည်းခြင်းနှင့်ပြန်ယူခြင်း',
-    'manual_backup': 'ဒေတာသိမ်းဆည်းရန် (Backup)',
-    'manual_restore': 'ဒေတာပြန်ယူရန် (Restore)',
-    'auto_backup': 'အလိုအလျောက်ဒေတာသိမ်းဆည်းခြင်း',
+    'backup_restore': 'Cloud နှင့် ဒေတာချိတ်ဆက်ခြင်း',
+    'cloud_backup': 'Cloud သို့ သိမ်းဆည်းမည်',
+    'cloud_restore': 'Cloud မှ ပြန်ယူမည်',
+    'offline_backup': 'ဖုန်းအတွင်း သိမ်းဆည်းခြင်း',
+    'export_db': 'ဖိုင်အဖြစ် သိမ်းမည် (.db)',
+    'import_db': 'ဖိုင်မှ ပြန်သွင်းမည် (.db)',
+    'auto_backup': 'အလိုအလျောက် Cloud သိမ်းဆည်းခြင်း',
     'none': 'ပိတ်ထားရန်',
     'backup_success': 'ဒေတာသိမ်းဆည်းမှုအောင်မြင်ပါသည်',
     'restore_success': 'ဒေတာပြန်ယူမှုအောင်မြင်ပါသည်၊ အက်ပ်ကိုပြန်ဖွင့်ပေးပါ။',
@@ -316,5 +477,15 @@ class SettingsProvider with ChangeNotifier {
     'category_management': 'ကဏ္ဍများစီမံခန့်ခွဲခြင်း',
     'manage_categories': 'ကဏ္ဍများကို စီမံမည်',
     'mmqr_pay': 'MMQR ဖြင့်ပေးချေမည်',
+    'expenses': 'အထွေထွေအသုံးစရိတ်များ',
+    'add_expense': 'အသုံးစရိတ်အသစ်ထည့်ရန်',
+    'expense_title': 'အသုံးစရိတ်ခေါင်းစဉ်',
+    'no_expenses_found': 'အသုံးစရိတ်မှတ်တမ်းမရှိပါ',
+    'confirm_delete': 'ဤအရာကိုဖျက်ရန်သေချာပါသလား?',
+    'customer_name': 'ဝယ်ယူသူအမည်',
+    'optional': 'မဖြစ်မနေထည့်ရန်မလိုပါ',
+    'low_stock_alerts': 'လက်ကျန်နည်းနေသောပစ္စည်းများ',
+    'items_low_stock': 'ခု လက်ကျန်နည်းနေပါသည်',
+    'view_all': 'အားလုံးကြည့်ရန်',
   };
 }

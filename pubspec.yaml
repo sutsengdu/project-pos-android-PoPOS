@@ -48,6 +48,12 @@ dependencies:
   share_plus: ^10.0.0
   file_picker: ^10.3.10
   image_picker: ^1.2.1
+  http: ^1.6.0
+  google_sign_in: ^6.2.1
+  device_info_plus: ^10.1.2
+  flutter_dotenv: ^5.1.0
+  uuid: ^4.3.3
+  connectivity_plus: ^6.0.3
 
 dev_dependencies:
   flutter_test:
@@ -63,7 +69,6 @@ dev_dependencies:
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
-
 # The following section is specific to Flutter packages.
 flutter:
 
@@ -74,6 +79,7 @@ flutter:
 
   # To add assets to your application, add an assets section, like this:
   assets:
+    - .env
     - assets/fonts/NotoSansMyanmar-Regular.ttf
     - assets/fonts/Roboto-Regular.ttf
     - assets/logo.png

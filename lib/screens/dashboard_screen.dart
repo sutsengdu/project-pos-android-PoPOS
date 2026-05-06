@@ -4,12 +4,15 @@ import 'package:intl/intl.dart';
 import '../providers/product_provider.dart';
 import '../providers/sale_provider.dart';
 import '../providers/settings_provider.dart';
+import '../providers/expense_provider.dart';
 import '../models/sale.dart';
 import 'product_screen.dart';
 import 'category_screen.dart';
 import 'sale_screen.dart';
 import 'sale_history_screen.dart';
 import 'settings_screen.dart';
+import 'main_screen.dart';
+import '../providers/staff_provider.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -38,7 +41,36 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     final settingsProvider = Provider.of<SettingsProvider>(context);
     return Scaffold(
       appBar: AppBar(
-        title: Text(settingsProvider.l10n('dashboard')),
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(settingsProvider.l10n('dashboard')),
+            if (settingsProvider.settings.isLoggedIn)
+              Text(
+                settingsProvider.isSyncing 
+                  ? (settingsProvider.languageCode == 'my' ? 'ဒေတာများ သိမ်းဆည်းနေသည်...' : 'Syncing...') 
+                  : (settingsProvider.lastSyncTime != null 
+                    ? '${settingsProvider.languageCode == 'my' ? 'နောက်ဆုံး သိမ်းဆည်းမှု' : 'Last Sync'}: ${DateFormat('HH:mm').format(settingsProvider.lastSyncTime!)}'
+                    : ''),
+                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.normal, color: Colors.grey),
+              ),
+          ],
+        ),
+        leading: Builder(
+          builder: (context) => IconButton(
+            icon: const Icon(Icons.menu_rounded),
+            onPressed: () => MainScreen.of(context)?.openDrawer(),
+          ),
+        ),
+        actions: [
+          if (settingsProvider.settings.isLoggedIn)
+            IconButton(
+              icon: settingsProvider.isSyncing 
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.sync_rounded),
+              onPressed: settingsProvider.isSyncing ? null : () => settingsProvider.syncNow(),
+            ),
+        ],
         bottom: TabBar(
           controller: _tabController,
           tabs: [
@@ -70,53 +102,75 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         final productProvider = Provider.of<ProductProvider>(context);
         
 
-        return SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 24.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildProfileCard(context),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.chevron_left_rounded),
-                    onPressed: () => setState(() => _dateOffset--),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    _getPeriodLabel(period, settingsProvider),
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: const Icon(Icons.chevron_right_rounded),
-                    onPressed: _dateOffset < 0 ? () => setState(() => _dateOffset++) : null,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                    color: _dateOffset < 0 ? null : Colors.grey,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              _buildStatsGrid(context, filteredSales.length, totalRevenue, productProvider.totalInstockWorth, saleProvider, period, start, end),
-              const SizedBox(height: 32),
-              Text(
-                settingsProvider.l10n('sales_trend'),
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
-              _buildTotalSalesChart(context, saleProvider, period),
-              const SizedBox(height: 32),
-              Text(
-                settingsProvider.l10n('top_selling_${period}'),
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
-              _buildTopSellingProducts(context, saleProvider, period, start, end),
-            ],
+        return RefreshIndicator(
+          onRefresh: () async {
+            if (settingsProvider.settings.isLoggedIn) {
+              await settingsProvider.syncNow();
+            }
+            await productProvider.fetchProducts();
+            await saleProvider.fetchSales();
+            await Provider.of<ExpenseProvider>(context, listen: false).fetchExpenses();
+          },
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 24.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Consumer<ProductProvider>(
+                  builder: (context, pp, _) => _buildLowStockAlerts(context, pp),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.chevron_left_rounded),
+                      onPressed: () => setState(() => _dateOffset--),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      _getPeriodLabel(period, settingsProvider),
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: const Icon(Icons.chevron_right_rounded),
+                      onPressed: _dateOffset < 0 ? () => setState(() => _dateOffset++) : null,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      color: _dateOffset < 0 ? null : Colors.grey,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                _buildStatsGrid(context, filteredSales.length, totalRevenue, productProvider.totalInstockWorth, saleProvider, period, start, end),
+                const SizedBox(height: 32),
+                Text(
+                  settingsProvider.l10n('sales_trend'),
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 16),
+                _buildTotalSalesChart(context, saleProvider, period),
+                const SizedBox(height: 32),
+                Text(
+                  settingsProvider.languageCode == 'my' ? 'အသုံးစရိတ် နှိုင်းယှဉ်ချက်' : 'Expense Trend',
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 16),
+                Consumer<ExpenseProvider>(
+                  builder: (context, ep, _) => _buildExpenseChart(context, ep, period),
+                ),
+                const SizedBox(height: 32),
+                Text(
+                  settingsProvider.l10n('top_selling_${period}'),
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 16),
+                _buildTopSellingProducts(context, saleProvider, period, start, end),
+              ],
+            ),
           ),
         );
       },
@@ -153,44 +207,54 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     return start.add(const Duration(days: 27, hours: 23, minutes: 59, seconds: 59));
   }
 
-  Widget _buildProfileCard(BuildContext context) {
+
+  Widget _buildLowStockAlerts(BuildContext context, ProductProvider provider) {
+    final lowStockItems = provider.lowStockProducts;
+    if (lowStockItems.isEmpty) return const SizedBox.shrink();
+
     final sp = Provider.of<SettingsProvider>(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Container(
-      padding: const EdgeInsets.all(20),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
+        color: isDark ? Colors.red.withOpacity(0.1) : const Color(0xFFFEF2F2),
         borderRadius: BorderRadius.circular(24),
-        boxShadow: Theme.of(context).brightness == Brightness.light 
-          ? [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 15, offset: const Offset(0, 5))]
-          : [],
+        border: Border.all(color: Colors.red.withOpacity(0.2)),
       ),
       child: Row(
         children: [
           Container(
-            width: 60, height: 60,
+            padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              gradient: const LinearGradient(colors: [Color(0xFF6366F1), Color(0xFF4F46E5)]),
-              borderRadius: BorderRadius.circular(20),
+              color: Colors.red.withOpacity(0.2),
+              shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.person_rounded, color: Colors.white, size: 30),
+            child: const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 24),
           ),
           const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(sp.languageCode == 'my' ? 'မင်္ဂလာပါ' : 'Welcome back,', style: const TextStyle(color: Colors.grey, fontSize: 14)),
                 Text(
-                  sp.settings.name,
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  overflow: TextOverflow.ellipsis,
+                  sp.l10n('low_stock_alerts'),
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.red),
+                ),
+                Text(
+                  '${lowStockItems.length} ${sp.l10n('items_low_stock')}',
+                  style: TextStyle(fontSize: 13, color: isDark ? Colors.white70 : Colors.red[700]),
                 ),
               ],
             ),
           ),
-          IconButton(
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen())),
-            icon: const Icon(Icons.settings_outlined, color: Colors.grey),
+          TextButton(
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProductScreen())),
+            child: Text(
+              sp.l10n('view_all'),
+              style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red),
+            ),
           ),
         ],
       ),
@@ -216,33 +280,76 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         _buildStatCard(
           context,
           sp.l10n('revenue'),
-          '${revenue.toStringAsFixed(0)} KS',
+          '${revenue.toStringAsFixed(0)} ${sp.settings.currencySymbol}',
           Icons.currency_exchange_outlined,
           [const Color(0xFF0EA5E9), const Color(0xFF38BDF8)],
           width: isWide ? (MediaQuery.of(context).size.width - 56) / 2 : double.infinity,
         ),
-        FutureBuilder<double>(
-          future: saleProvider.getProfit(start, end),
-          builder: (context, snapshot) {
-            return _buildStatCard(
-              context,
-              sp.l10n('profit'),
-              '${(snapshot.data ?? 0.0).toStringAsFixed(0)} KS',
-              Icons.trending_up_rounded,
-              [const Color(0xFFF59E0B), const Color(0xFFFBBF24)],
-              width: isWide ? (MediaQuery.of(context).size.width - 56) / 2 : double.infinity,
-            );
-          },
-        ),
-        _buildStatCard(
-          context,
-          sp.l10n('instock_worth'),
-          '${stockWorth.toStringAsFixed(0)} KS',
-          Icons.inventory_2_outlined,
-          [const Color(0xFF10B981), const Color(0xFF34D399)],
-          width: isWide ? (MediaQuery.of(context).size.width - 56) / 2 : double.infinity,
-        ),
+        if (!sp.settings.isProUnlocked || Provider.of<StaffProvider>(context, listen: false).hasPermission('view_profit')) ...[
+          FutureBuilder<double>(
+            future: saleProvider.getProfit(start, end),
+            builder: (context, snapshot) {
+              return _buildStatCard(
+                context,
+                sp.l10n('profit'),
+                '${(snapshot.data ?? 0.0).toStringAsFixed(0)} ${sp.settings.currencySymbol}',
+                Icons.trending_up_rounded,
+                [const Color(0xFFF59E0B), const Color(0xFFFBBF24)],
+                width: isWide ? (MediaQuery.of(context).size.width - 56) / 2 : double.infinity,
+              );
+            },
+          ),
+          Consumer<ExpenseProvider>(
+            builder: (context, ep, _) {
+              final totalExp = ep.getTotalExpenses(start, end);
+              return _buildStatCard(
+                context,
+                sp.l10n('expenses'),
+                '${totalExp.toStringAsFixed(0)} ${sp.settings.currencySymbol}',
+                Icons.money_off_rounded,
+                [const Color(0xFFEF4444), const Color(0xFFF87171)],
+                width: isWide ? (MediaQuery.of(context).size.width - 56) / 2 : double.infinity,
+              );
+            },
+          ),
+          _buildStatCard(
+            context,
+            sp.l10n('instock_worth'),
+            '${stockWorth.toStringAsFixed(0)} ${sp.settings.currencySymbol}',
+            Icons.inventory_2_outlined,
+            [const Color(0xFF10B981), const Color(0xFF34D399)],
+            width: isWide ? (MediaQuery.of(context).size.width - 56) / 2 : double.infinity,
+          ),
+        ],
       ],
+    );
+  }
+
+  Widget _buildProPlaceholder(BuildContext context, SettingsProvider sp) {
+    return Container(
+      height: 150,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.orange.withOpacity(0.2)),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.lock_outline_rounded, color: Colors.orange, size: 32),
+          const SizedBox(height: 12),
+          Text(
+            sp.languageCode == 'my' ? 'PRO ဗားရှင်းတွင်သာ ကြည့်ရှုနိုင်ပါသည်' : 'Available in PRO version',
+            style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.orange),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            sp.languageCode == 'my' ? 'ဆက်တင်တွင် PRO Mode ကို ဖွင့်ပါ' : 'Enable PRO mode in Settings',
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ],
+      ),
     );
   }
 
@@ -283,12 +390,21 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
 
   Widget _buildTotalSalesChart(BuildContext context, SaleProvider provider, String period) {
     final chartData = provider.getSalesForChart(period, offset: _dateOffset);
+    return _buildChart(context, chartData, [const Color(0xFF6366F1), const Color(0xFF818CF8)]);
+  }
+
+  Widget _buildExpenseChart(BuildContext context, ExpenseProvider provider, String period) {
+    final chartData = provider.getExpensesForChart(period, offset: _dateOffset);
+    return _buildChart(context, chartData, [const Color(0xFFEF4444), const Color(0xFFF87171)]);
+  }
+
+  Widget _buildChart(BuildContext context, List<Map<String, dynamic>> chartData, List<Color> colors) {
     if (chartData.isEmpty) {
       return Container(
         height: 150,
         width: double.infinity,
         decoration: BoxDecoration(color: Theme.of(context).cardColor, borderRadius: BorderRadius.circular(24)),
-        child: const Center(child: Text('No sales data')),
+        child: const Center(child: Text('No data')),
       );
     }
 
@@ -320,13 +436,16 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 if (data['value'] > 0)
-                  Text('${data['value'].toStringAsFixed(0)}', style: const TextStyle(fontSize: 8, color: Colors.grey)),
+                  Text(
+                    data['value'] >= 1000 ? '${(data['value']/1000).toStringAsFixed(1)}k' : data['value'].toStringAsFixed(0),
+                    style: const TextStyle(fontSize: 8, color: Colors.grey)
+                  ),
                 const SizedBox(height: 4),
                 Container(
                   width: 14,
                   height: 130 * heightFactor,
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(colors: [Color(0xFF6366F1), Color(0xFF818CF8)], begin: Alignment.topCenter, end: Alignment.bottomCenter),
+                    gradient: LinearGradient(colors: colors, begin: Alignment.topCenter, end: Alignment.bottomCenter),
                     borderRadius: BorderRadius.circular(4),
                   ),
                 ),

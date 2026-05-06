@@ -1,13 +1,17 @@
 class Category {
   final int? id;
   final String name;
+  final String? uuid;
+  final String? updatedAt;
 
-  Category({this.id, required this.name});
+  Category({this.id, required this.name, this.uuid, this.updatedAt});
 
   Map<String, dynamic> toMap() {
     return {
       'id': id,
       'name': name,
+      'uuid': uuid,
+      'updated_at': updatedAt,
     };
   }
 
@@ -15,6 +19,8 @@ class Category {
     return Category(
       id: map['id'],
       name: map['name'],
+      uuid: map['uuid'],
+      updatedAt: map['updated_at'],
     );
   }
 }
