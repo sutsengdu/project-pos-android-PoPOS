@@ -4,7 +4,7 @@ A modern, fast, and beautiful Point of Sale (POS) system. PoPOS is a full-stack 
 
 ---
 
-## 🏗️ Project Architecture
+## Project Architecture
 
 This repository contains the complete PoPOS ecosystem:
 
@@ -14,7 +14,7 @@ This repository contains the complete PoPOS ecosystem:
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### 1. Backend Setup (Laravel)
 
@@ -100,7 +100,7 @@ The mobile application for barcode scanning and quick sales.
 
 ---
 
-## 📦 Building for Production
+## Building for Production
 
 ### Android APK
 To generate a production-ready `.apk` file:
@@ -118,7 +118,7 @@ npm run build
 
 ---
 
-## ✨ Features
+## Features
 
 - **Dashboard**: Real-time sales insights and performance trends.
 - **Product Management**: Easy-to-use inventory management with barcode support.
@@ -130,7 +130,7 @@ npm run build
 
 ---
 
-## 🛠️ Built With
+## Built With
 
 - **Flutter** - Mobile UI Framework
 - **React + Vite** - Web Dashboard
@@ -140,13 +140,13 @@ npm run build
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Please fork the repository and submit a pull request.
 1. Fork the Project
